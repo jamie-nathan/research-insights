@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deliveroo Research & Insights - Growth Compass</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8f9fa;
+        }
+        .deliveroo-teal { color: #00CCBC; }
+        .deliveroo-teal-bg { background-color: #00CCBC; }
+        .deliveroo-teal-border { border-color: #00CCBC; }
+        .rating-group label {
+            transition: all 0.2s ease-in-out;
+            text-align: center;
+        }
+        .rating-group input[type="radio"]:checked + label {
+            background-color: #00CCBC;
+            color: white;
+            border-color: #00CCBC;
+            transform: scale(1.05);
+        }
+        /* Custom scrollbar for history */
+        .history-panel::-webkit-scrollbar {
+            width: 8px;
+        }
+        .history-panel::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        .history-panel::-webkit-scrollbar-thumb {
+            background: #ccc;
+            border-radius: 10px;
+        }
+        .history-panel::-webkit-scrollbar-thumb:hover {
+            background: #aaa;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+
+<!-- Firebase and App Logic -->
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, setDoc, getDoc, collection, addDoc, getDocs, query, orderBy, onSnapshot, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    // --- Configuration ---
+    // IMPORTANT: Replace with your actual Firebase configuration
+    const firebaseConfig = {
+        apiKey: "AIzaSyAvhYjEqUUo8uch4WZqW2ViJ3VxyqEu11k",
+        authDomain: "career-progression-afe07.firebaseapp.com",
+        projectId: "career-progression-afe07",
+        storageBucket: "career-progression-afe07.firebasestorage.app",
+        messagingSenderId: "120025082610",
+        appId: "1:120025082610:web:c0e2101e6f344067c97e6b",
+        measurementId: "G-SBKMPJPS2G"
+    };
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'growth-compass-dev';
+
+    // --- Firebase Initialization ---
+    let app, auth, db, userId;
+    let isAuthReady = false;
+
+    function initializeFirebase() {
+        try {
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+            // setLogLevel('debug');
+
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    userId = user.uid;
+                    isAuthReady = true;
+                    document.getElementById('user-id-display').textContent = `User ID: ${userId}`;
+                    loadHistory();
+                } else {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (error) {
+                        console.error("Sign-in failed:", error);
+                        displayMessage("Could not connect to the server. Please refresh.", "error");
+                    }
+                }
+            });
+        } catch (error) {
+            console.error("Firebase initialization failed:", error);
+            displayMessage("Failed to initialize the application. Please check console.", "error");
+        }
+    }
+
+    // --- Core Data & State ---
+    // UPDATED: Competencies now reflect the new framework and strategic order
+    const competencies = [
+        { id: 'craft', name: '1. Pride In Our Craft [HOW]' },
+        { id: 'domain', name: '2. Owning Your Domain [WHERE]' },
+        { id: 'agenda', name: '3. Driving The Agenda [WHAT]' },
+        { id: 'way', name: '4. Guiding The Way [WHO]' },
+        { id: 'ai', name: '5. Amplified by AI [SCALE]' },
+        { id: 'impact', name: '6. From Insight To Impact [WHY]' },
+    ];
+
+    const ratingScale = [
+        { value: 1, label: 'Developing', description: 'Building skills for this competency at my target level.' },
+        { value: 2, label: 'Meeting', description: 'Consistently demonstrating skills for this competency at my target level.' },
+        { value: 3, label: 'Exceeding', description: 'Performing beyond the expectations and showing signs of the next level.' }
+    ];
+
+    const levels = {
+        '3': 'L3: Research Assistant', '4': 'L4: Research Manager', '5': 'L5: Senior Research Manager',
+        '6': 'L6: Head of Research Area', '7': 'L7: Senior Head of Research', '8': 'L8: Director of Research'
+    };
+
+    let myChart;
+
+    // --- UI Rendering & Logic ---
+    function renderCompetencies() {
+        const container = document.getElementById('competencies-container');
+        container.innerHTML = competencies.map(c => `
+            <div class="bg-white p-6 rounded-lg shadow-sm mb-4 border border-gray-200">
+                <h3 class="font-bold text-lg text-gray-900">${c.name}</h3>
+                <div class="mt-4">
+                    <div class="rating-group grid grid-cols-1 sm:grid-cols-3 gap-3" id="rating-${c.id}">
+                        ${ratingScale.map(r => `
+                            <div>
+                                <input type="radio" id="${c.id}-${r.value}" name="${c.id}" value="${r.value}" class="sr-only">
+                                <label for="${c.id}-${r.value}" class="cursor-pointer w-full h-full flex flex-col justify-center items-center p-4 border-2 rounded-lg font-semibold text-gray-700 hover:bg-gray-100">
+                                    <span class="text-base">${r.label}</span>
+                                    <span class="text-xs font-normal text-gray-500 mt-1">${r.description}</span>
+                                </label>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                <div class="mt-5">
+                    <label for="evidence-${c.id}" class="text-sm text-gray-600 font-medium">Evidence & Reflections (link to projects, docs, etc.):</label>
+                    <textarea id="evidence-${c.id}" rows="3" class="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-teal-400 focus:border-teal-400"></textarea>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function setupChart() {
+        const ctx = document.getElementById('growthChart').getContext('2d');
+        // UPDATED: Chart labels are generated from the new competency names for conciseness
+        const chartLabels = competencies.map(c => c.name.substring(3).split(' [')[0]);
+
+        myChart = new Chart(ctx, {
+            type: 'radar',
+            data: {
+                labels: chartLabels,
+                datasets: [
+                    {
+                        label: 'Target: Meeting Expectations',
+                        data: [2, 2, 2, 2, 2, 2], // Always 2 for "Meeting"
+                        borderColor: 'rgba(200, 200, 200, 1)',
+                        backgroundColor: 'rgba(200, 200, 200, 0.1)',
+                        borderWidth: 2,
+                        pointBackgroundColor: 'rgba(200, 200, 200, 1)',
+                    },
+                    {
+                        label: 'My Current Assessment',
+                        data: [0, 0, 0, 0, 0, 0],
+                        borderColor: '#00CCBC',
+                        backgroundColor: 'rgba(0, 204, 188, 0.2)',
+                        borderWidth: 2,
+                        pointBackgroundColor: '#00CCBC',
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    r: {
+                        angleLines: { color: 'rgba(0, 0, 0, 0.1)' },
+                        grid: { color: 'rgba(0, 0, 0, 0.1)' },
+                        pointLabels: { font: { size: 12 } },
+                        min: 0,
+                        max: 3,
+                        ticks: {
+                            stepSize: 1,
+                            backdropColor: 'rgba(255, 255, 255, 0.75)',
+                            callback: function(value) {
+                                if (value === 1) return 'Developing';
+                                if (value === 2) return 'Meeting';
+                                if (value === 3) return 'Exceeding';
+                                return '';
+                            }
+                        }
+                    }
+                },
+                plugins: {
+                    legend: { position: 'top' }
+                }
+            }
+        });
+    }
+
+    function updateChart() {
+        if (!myChart) return;
+        const currentRatings = competencies.map(c => {
+            const checked = document.querySelector(`input[name="${c.id}"]:checked`);
+            return checked ? parseInt(checked.value) : 0;
+        });
+        myChart.data.datasets[1].data = currentRatings;
+        myChart.update();
+    }
+
+    function displayMessage(message, type = "success") {
+        const messageBox = document.getElementById('message-box');
+        messageBox.textContent = message;
+        messageBox.className = `p-4 rounded-md text-center font-medium mb-4 ${type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`;
+        messageBox.classList.remove('hidden');
+        setTimeout(() => {
+            messageBox.classList.add('hidden');
+        }, 4000);
+    }
+
+    // --- Data Handling (Firestore) ---
+    async function saveAssessment() {
+        if (!isAuthReady || !userId) {
+            displayMessage("Not authenticated. Please wait or refresh.", "error");
+            return;
+        }
+
+        const assessmentData = {
+            userId: userId,
+            timestamp: new Date().toISOString(),
+            currentLevel: document.getElementById('currentLevel').value,
+            targetLevel: document.getElementById('targetLevel').value,
+            actionPlan: document.getElementById('actionPlan').value,
+            competencies: competencies.map(c => {
+                const checked = document.querySelector(`input[name="${c.id}"]:checked`);
+                return {
+                    id: c.id,
+                    name: c.name, // Save the name for future reference
+                    rating: checked ? parseInt(checked.value) : 0,
+                    evidence: document.getElementById(`evidence-${c.id}`).value
+                };
+            })
+        };
+
+        const saveButton = document.getElementById('saveButton');
+        saveButton.disabled = true;
+        saveButton.textContent = 'Saving...';
+
+        try {
+            const collectionPath = `artifacts/${appId}/users/${userId}/growth_compass`;
+            await addDoc(collection(db, collectionPath), assessmentData);
+            displayMessage("Assessment saved successfully!", "success");
+        } catch (error) {
+            console.error("Error saving assessment: ", error);
+            displayMessage("Failed to save assessment. See console for details.", "error");
+        } finally {
+            saveButton.disabled = false;
+            saveButton.textContent = 'Save Assessment';
+        }
+    }
+
+    async function loadHistory() {
+        if (!isAuthReady || !userId) return;
+
+        const historyContainer = document.getElementById('history-list');
+        const collectionPath = `artifacts/${appId}/users/${userId}/growth_compass`;
+        const q = query(collection(db, collectionPath), orderBy("timestamp", "desc"));
+
+        onSnapshot(q, (querySnapshot) => {
+            if (querySnapshot.empty) {
+                historyContainer.innerHTML = `<p class="text-gray-500 text-center p-4">No saved assessments yet.</p>`;
+                return;
+            }
+            historyContainer.innerHTML = ''; // Clear previous list
+            querySnapshot.forEach((doc) => {
+                const data = doc.data();
+                const date = new Date(data.timestamp).toLocaleDateString('en-GB', {
+                    day: 'numeric', month: 'short', year: 'numeric'
+                });
+                const historyItem = document.createElement('button');
+                historyItem.className = 'block w-full text-left p-3 mb-2 bg-white hover:bg-gray-100 rounded-md shadow-sm border border-gray-200';
+                historyItem.innerHTML = `
+                    <span class="font-semibold text-gray-800">${date}</span>
+                    <span class="text-sm text-gray-500 block">From ${levels[data.currentLevel] || 'N/A'} to ${levels[data.targetLevel] || 'N/A'}</span>
+                `;
+                historyItem.onclick = () => loadAssessment(data);
+                historyContainer.appendChild(historyItem);
+            });
+        }, (error) => {
+            console.error("Error loading history:", error);
+            historyContainer.innerHTML = `<p class="text-red-500 text-center p-4">Could not load history.</p>`;
+        });
+    }
+
+    function loadAssessment(data) {
+        // Reset form first to clear any old state
+        document.getElementById('assessment-form').reset();
+        document.querySelectorAll('input[type="radio"]').forEach(r => r.checked = false);
+
+        document.getElementById('currentLevel').value = data.currentLevel;
+        document.getElementById('targetLevel').value = data.targetLevel;
+        document.getElementById('actionPlan').value = data.actionPlan || '';
+
+        // Load data for competencies that exist in the current framework
+        data.competencies.forEach(savedComp => {
+            const currentComp = competencies.find(c => c.id === savedComp.id);
+            if (currentComp) {
+                const radio = document.getElementById(`${savedComp.id}-${savedComp.rating}`);
+                if (radio) radio.checked = true;
+                
+                const evidenceEl = document.getElementById(`evidence-${savedComp.id}`);
+                if (evidenceEl) evidenceEl.value = savedComp.evidence || '';
+            }
+        });
+
+        updateChart();
+        displayMessage(`Loaded assessment from ${new Date(data.timestamp).toLocaleDateString()}`, "success");
+    }
+
+    // --- Event Listeners & Initialization ---
+    window.onload = () => {
+        initializeFirebase();
+        renderCompetencies();
+        setupChart();
+
+        document.getElementById('assessment-form').addEventListener('change', updateChart);
+        document.getElementById('saveButton').addEventListener('click', saveAssessment);
+        document.getElementById('newAssessmentButton').addEventListener('click', () => {
+            document.getElementById('assessment-form').reset();
+            // Manually uncheck radios as reset() might not trigger change event for chart
+            document.querySelectorAll('input[type="radio"]').forEach(r => r.checked = false);
+            updateChart();
+            displayMessage("Cleared form for new assessment.", "success");
+        });
+    };
+</script>
+
+<!-- Main Application UI -->
+<div class="min-h-screen p-4 sm:p-6 lg:p-8">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold deliveroo-teal">Research & Insights</h1>
+            <h2 class="text-5xl font-extrabold text-gray-900 mt-2">Growth Compass</h2>
+            <p class="mt-4 max-w-2xl mx-auto text-lg text-gray-600">A tool for self-assessment, reflection, and career growth planning.</p>
+            <p id="user-id-display" class="text-xs text-gray-400 mt-2"></p>
+        </header>
+
+        <div id="message-box" class="hidden"></div>
+
+        <!-- Main Content Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+            <!-- Left Panel: Assessment Form -->
+            <main class="lg:col-span-2">
+                <form id="assessment-form" onsubmit="return false;">
+                    <!-- Level Selection -->
+                    <div class="bg-white p-6 rounded-lg shadow-sm mb-6 border border-gray-200">
+                        <h3 class="font-bold text-xl text-gray-900 mb-4">1. Define Your Journey</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label for="currentLevel" class="block text-sm font-medium text-gray-700">My Current Level</label>
+                                <select id="currentLevel" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-teal-500 focus:border-teal-500 sm:text-sm rounded-md">
+                                    <option value="3">L3: Research Assistant</option>
+                                    <option value="4" selected>L4: Research Manager</option>
+                                    <option value="5">L5: Senior Research Manager</option>
+                                    <option value="6">L6: Head of Research Area</option>
+                                    <option value="7">L7: Senior Head of Research</option>
+                                    <option value="8">L8: Director of Research</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="targetLevel" class="block text-sm font-medium text-gray-700">My Target Level</label>
+                                <select id="targetLevel" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-teal-500 focus:border-teal-500 sm:text-sm rounded-md">
+                                    <option value="3">L3: Research Assistant</option>
+                                    <option value="4">L4: Research Manager</option>
+                                    <option value="5" selected>L5: Senior Research Manager</option>
+                                    <option value="6">L6: Head of Research Area</option>
+                                    <option value="7">L7: Senior Head of Research</option>
+                                    <option value="8">L8: Director of Research</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Competencies -->
+                    <div class="mb-6">
+                        <div class="bg-teal-50 border-l-4 border-teal-400 p-4 rounded-r-lg mb-4">
+                            <div class="flex">
+                                <div class="flex-shrink-0">
+                                    <svg class="h-5 w-5 text-teal-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                                    </svg>
+                                </div>
+                                <div class="ml-3">
+                                    <p class="text-sm text-teal-700">
+                                        For each competency below, assess your performance against the expectations of your chosen <strong class="font-semibold">Target Level</strong>.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <h3 class="font-bold text-xl text-gray-900 mb-4">2. Assess Your Competencies</h3>
+                        <div id="competencies-container"></div>
+                    </div>
+
+                    <!-- Action Plan -->
+                    <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                        <h3 class="font-bold text-xl text-gray-900 mb-4">3. Plan Your Next Steps</h3>
+                        <label for="actionPlan" class="block text-sm font-medium text-gray-700">What are 2-3 key areas you will focus on before your next check-in?</label>
+                        <!-- UPDATED: Placeholder text now reflects a new competency -->
+                        <textarea id="actionPlan" rows="4" class="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-teal-400 focus:border-teal-400" placeholder="e.g., Proactively identify a new research area to improve 'Driving The Agenda'."></textarea>
+                    </div>
+                </form>
+            </main>
+
+            <!-- Right Panel: Chart and History -->
+            <aside class="space-y-8">
+                <!-- Chart -->
+                <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200 sticky top-8">
+                    <h3 class="font-bold text-xl text-gray-900 mb-4">Your Growth Compass</h3>
+                    <div class="h-80 md:h-96">
+                        <canvas id="growthChart"></canvas>
+                    </div>
+                    <div class="mt-6 flex flex-col sm:flex-row gap-3">
+                        <button id="saveButton" class="w-full deliveroo-teal-bg text-white font-bold py-3 px-4 rounded-lg hover:bg-teal-600 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500">Save Assessment</button>
+                        <button id="newAssessmentButton" class="w-full bg-gray-200 text-gray-700 font-bold py-3 px-4 rounded-lg hover:bg-gray-300 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-400">New</button>
+                    </div>
+                </div>
+                <!-- History -->
+                <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                    <h3 class="font-bold text-xl text-gray-900 mb-4">Assessment History</h3>
+                    <div id="history-list" class="history-panel max-h-96 overflow-y-auto pr-2">
+                        <p class="text-gray-500 text-center p-4">Loading history...</p>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    </div>
+</div>
+</body>
+</html>
