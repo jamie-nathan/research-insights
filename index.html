@@ -49,7 +49,7 @@
 <!-- Firebase and App Logic -->
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-    import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, doc, setDoc, getDoc, collection, addDoc, getDocs, query, orderBy, onSnapshot, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
     // --- Configuration ---
@@ -76,25 +76,31 @@
             db = getFirestore(app);
             // setLogLevel('debug');
 
-            onAuthStateChanged(auth, async (user) => {
-                if (user) {
-                    userId = user.uid;
-                    isAuthReady = true;
-                    document.getElementById('user-id-display').textContent = `User ID: ${userId}`;
-                    loadHistory();
-                } else {
-                    try {
-                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                            await signInWithCustomToken(auth, __initial_auth_token);
-                        } else {
-                            await signInAnonymously(auth);
-                        }
-                    } catch (error) {
-                        console.error("Sign-in failed:", error);
-                        displayMessage("Could not connect to the server. Please refresh.", "error");
-                    }
-                }
-            });
+            onAuthStateChanged(auth, (user) => {
+    const authContainer = document.getElementById('auth-container');
+    const appContainer = document.getElementById('app-container');
+
+    if (user) {
+        // User is signed in
+        userId = user.uid;
+        isAuthReady = true;
+        
+        // Update UI
+        document.getElementById('user-id-display').textContent = `User: ${user.email}`;
+        authContainer.classList.add('hidden');
+        appContainer.classList.remove('hidden');
+        
+        loadHistory(); // Load data for the logged-in user
+    } else {
+        // User is signed out
+        userId = null;
+        isAuthReady = false;
+
+        // Update UI
+        appContainer.classList.add('hidden');
+        authContainer.classList.remove('hidden');
+    }
+});
         } catch (error) {
             console.error("Firebase initialization failed:", error);
             displayMessage("Failed to initialize the application. Please check console.", "error");
@@ -229,6 +235,65 @@
         }, 4000);
     }
 
+    // --- NEW Authentication Event Handlers ---
+
+function handleSignUp(event) {
+    event.preventDefault();
+    const email = document.getElementById('signup-email').value;
+    const password = document.getElementById('signup-password').value;
+
+    createUserWithEmailAndPassword(auth, email, password)
+        .then((userCredential) => {
+            // Signed in successfully, onAuthStateChanged will handle the rest
+            displayMessage(`Account created for ${userCredential.user.email}!`, 'success');
+        })
+        .catch((error) => {
+            console.error("Sign-up error:", error);
+            displayMessage(error.message, 'error');
+        });
+}
+
+function handleSignIn(event) {
+    event.preventDefault();
+    const email = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
+
+    signInWithEmailAndPassword(auth, email, password)
+        .then((userCredential) => {
+            // Signed in successfully, onAuthStateChanged will handle the rest
+        })
+        .catch((error) => {
+            console.error("Sign-in error:", error);
+            displayMessage(error.message, 'error');
+        });
+}
+
+function handleSignOut() {
+    signOut(auth).catch((error) => {
+        console.error("Sign-out error:", error);
+        displayMessage(error.message, 'error');
+    });
+}
+
+function toggleAuthMode(event) {
+    event.preventDefault();
+    const loginForm = document.getElementById('login-form');
+    const signupForm = document.getElementById('signup-form');
+    const toggleLink = document.getElementById('toggle-auth-mode');
+
+    if (loginForm.classList.contains('hidden')) {
+        // Switch to Login
+        loginForm.classList.remove('hidden');
+        signupForm.classList.add('hidden');
+        toggleLink.textContent = "Don't have an account? Sign Up";
+    } else {
+        // Switch to Sign Up
+        loginForm.classList.add('hidden');
+        signupForm.classList.remove('hidden');
+        toggleLink.textContent = 'Already have an account? Sign In';
+    }
+}
+
     // --- Data Handling (Firestore) ---
     async function saveAssessment() {
         if (!isAuthReady || !userId) {
@@ -330,21 +395,76 @@
 
     // --- Event Listeners & Initialization ---
     window.onload = () => {
-        initializeFirebase();
-        renderCompetencies();
-        setupChart();
+    initializeFirebase();
+    renderCompetencies();
+    setupChart();
 
-        document.getElementById('assessment-form').addEventListener('change', updateChart);
-        document.getElementById('saveButton').addEventListener('click', saveAssessment);
-        document.getElementById('newAssessmentButton').addEventListener('click', () => {
-            document.getElementById('assessment-form').reset();
-            // Manually uncheck radios as reset() might not trigger change event for chart
-            document.querySelectorAll('input[type="radio"]').forEach(r => r.checked = false);
-            updateChart();
-            displayMessage("Cleared form for new assessment.", "success");
-        });
-    };
+    // Main app listeners
+    document.getElementById('assessment-form').addEventListener('change', updateChart);
+    document.getElementById('saveButton').addEventListener('click', saveAssessment);
+    document.getElementById('newAssessmentButton').addEventListener('click', () => {
+        document.getElementById('assessment-form').reset();
+        document.querySelectorAll('input[type="radio"]').forEach(r => r.checked = false);
+        updateChart();
+        displayMessage("Cleared form for new assessment.", "success");
+    });
+
+    // NEW Auth listeners
+    document.getElementById('login-form').addEventListener('submit', handleSignIn);
+    document.getElementById('signup-form').addEventListener('submit', handleSignUp);
+    document.getElementById('signOutButton').addEventListener('click', handleSignOut);
+    document.getElementById('toggle-auth-mode').addEventListener('click', toggleAuthMode);
+};
 </script>
+
+<div id="auth-container" class="hidden min-h-screen bg-gray-100 flex flex-col justify-center items-center p-4">
+    <div class="max-w-md w-full bg-white p-8 rounded-lg shadow-md">
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold deliveroo-teal">Growth Compass</h1>
+            <p class="text-gray-600 mt-2">Sign in or create an account to continue</p>
+        </div>
+        
+        <form id="login-form">
+            <div class="mb-4">
+                <label for="login-email" class="block text-sm font-medium text-gray-700">Email</label>
+                <input type="email" id="login-email" required class="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-teal-400">
+            </div>
+            <div class="mb-6">
+                <label for="login-password" class="block text-sm font-medium text-gray-700">Password</label>
+                <input type="password" id="login-password" required class="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-teal-400">
+            </div>
+            <button type="submit" class="w-full deliveroo-teal-bg text-white font-bold py-3 px-4 rounded-lg hover:bg-teal-600 transition-colors">Sign In</button>
+        </form>
+
+        <form id="signup-form" class="hidden">
+            <div class="mb-4">
+                <label for="signup-email" class="block text-sm font-medium text-gray-700">Email</label>
+                <input type="email" id="signup-email" required class="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-teal-400">
+            </div>
+            <div class="mb-6">
+                <label for="signup-password" class="block text-sm font-medium text-gray-700">Password</label>
+                <input type="password" id="signup-password" required class="mt-1 w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-teal-400" placeholder="Must be at least 6 characters">
+            </div>
+            <button type="submit" class="w-full deliveroo-teal-bg text-white font-bold py-3 px-4 rounded-lg hover:bg-teal-600 transition-colors">Create Account</button>
+        </form>
+
+        <p class="text-center text-sm text-gray-600 mt-6">
+            <a href="#" id="toggle-auth-mode" class="font-medium deliveroo-teal hover:underline">Don't have an account? Sign Up</a>
+        </p>
+    </div>
+</div>
+
+<div id="app-container" class="hidden min-h-screen p-4 sm:p-6 lg:p-8">
+    ```
+
+Next, add a **Sign Out** button to your header so logged-in users can exit. In your `header` element, add this button:
+
+```html
+<header class="text-center mb-8 relative">
+    <button id="signOutButton" class="absolute top-0 right-0 bg-gray-200 text-gray-700 font-bold py-2 px-4 rounded-lg hover:bg-gray-300 transition-colors">Sign Out</button>
+</header>
+
+
 
 <!-- Main Application UI -->
 <div class="min-h-screen p-4 sm:p-6 lg:p-8">
